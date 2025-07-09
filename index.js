@@ -1,19 +1,19 @@
 const express = require("express");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-
 const cors = require("cors");
 const fileUpload = require("express-fileupload");
 require("dotenv").config();
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
-const port = 7000;
+const port = process.env.PORT || 7000;
 
-// middleware
+// Middlewares
 app.use(cors());
 app.use(express.json());
-// middleware for file upload
 app.use(fileUpload());
+
+// MongoDB Connection Caching
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.z1t2q.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 const client = new MongoClient(uri, {
     serverApi: {
@@ -23,205 +23,134 @@ const client = new MongoClient(uri, {
     },
 });
 
-async function serverStart() {
-    try {
-        await client.connect();
-
-        const database = client.db("Mobile-Store");
-        const mobileCollection = database.collection("Mobile");
-        const laptopCollection = database.collection("Laptop");
-        const tvCollection = database.collection("Tv");
-        const allCategoryCollection = database.collection("All-Category");
-        const bookingCollection = database.collection("Bookings");
-        const usersCollection = database.collection("Users");
-        const paymentCollection = database.collection("Payments");
-
-        const servicesCollection = database.collection("Service");
-
-        app.get("/mobile", async (req, res) => {
-            const query = {};
-            const mobile = await mobileCollection.find(query).toArray();
-            res.send(mobile);
-        });
-        app.get("/laptops", async (req, res) => {
-            const query = {};
-            const laptop = await laptopCollection.find(query).toArray();
-            res.send(laptop);
-        });
-        app.get("/tv", async (req, res) => {
-            const query = {};
-            const tv = await tvCollection.find(query).toArray();
-            res.send(tv);
-        });
-        app.get("/categories", async (req, res) => {
-            const query = {};
-            const allCategory = await allCategoryCollection.find(query).toArray();
-            res.send(allCategory);
-        });
-
-        // get all bookings for a specific user by email
-        app.get("/bookings", async (req, res) => {
-            const email = req.query.email;
-            const query = { email: email };
-            const bookings = await bookingCollection.find(query).toArray();
-            res.send(bookings);
-        });
-
-        // Post all booking 
-        app.post("/bookings", async (req, res) => {
-            const booking = req.body;
-
-            console.log(booking);
-
-            const query = {
-
-                email: booking.email,
-                serviceName: booking.serviceName,
-            };
-
-            const alreadyBooked = await bookingCollection.find(query).toArray();
-            console.log(alreadyBooked);
-
-            if (alreadyBooked.length) {
-                const message = `You already have a booking on ${booking.appointmentDate}`;
-                return res.send({ acknowledge: false, message });
-            }
-
-            const result = await bookingCollection.insertOne(booking);
-            res.send(result);
-        });
-
-        // add payment
-        app.post("/create-payment-intent", async (req, res) => {
-            const booking = req.body;
-            const price = booking.price;
-            const amount = price * 100;
-            const paymentIntent = await stripe.paymentIntents.create({
-                currency: "usd",
-                amount: amount,
-                "payment_method_types": [
-                    "card"
-
-                ],
-
-            });
-            res.send({
-                clientSecret: paymentIntent.client_secret,
-            });
-        });
-
-        app.get("/bookings/:id", async (req, res) => {
-            const id = req.params.id;
-            const query = { _id: new ObjectId(id) };
-            const booking = await bookingCollection.findOne(query);
-            res.send(booking);
-        });
-
-        // post payment
-
-        app.post("/payments", async (req, res) => {
-            const payment = req.body;
-            const result = await paymentCollection.insertOne(payment);
-            const id = payment.bookingId;
-            const filter = { _id: new ObjectId(id) };
-            const updatedDoc = {
-                $set: {
-                    paid: true,
-                    transactionId: payment.transactionId,
-                },
-            };
-            const updatedResult = await bookingCollection.updateOne(filter, updatedDoc);
-            res.send(result);
-        })
-
-        app.get("/users", async (req, res) => {
-            const query = {};
-            const users = await usersCollection.find(query).toArray();
-            res.send(users);
-        });
-
-        // Users post
-
-        app.post("/users", async (req, res) => {
-            const user = req.body;
-            const result = await usersCollection.insertOne(user);
-            res.send(result);
-        });
-
-        // Make Admin user
-
-        app.put("/users/admin/:id", async (req, res) => {
-            const id = req.params.id;
-            const filter = { _id: new ObjectId(id) };
-            const options = { upsert: true };
-            const updatedDoc = {
-                $set: {
-                    role: "admin",
-                },
-            };
-            const result = await usersCollection.updateOne(
-                filter,
-                updatedDoc,
-                options
-            );
-            res.send(result);
-        });
-
-        // check admin or not
-
-        app.get("/users/admin/:email", async (req, res) => {
-            const email = req.params.email;
-            const query = { email: email };
-            const user = await usersCollection.findOne(query);
-            res.send({ isAdmin: user?.role === "admin" });
-        });
-        // add services
-        //get all services
-        app.get("/all-service", async (req, res) => {
-            const query = {};
-            const services = await servicesCollection.find(query).toArray();
-            res.send(services);
-        });
-
-        // post services
-        app.post("/add-service", async (req, res) => {
-            const name = req.body.name;
-            const description = req.body.description;
-            const pic = req.files.image;
-            const picData = pic.data;
-            const encodedPic = picData.toString("base64");
-            const imageBuffer = Buffer.from(encodedPic, "base64");
-
-            const service = {
-                name,
-                des: description,
-                img: imageBuffer,
-            };
-            const result = await servicesCollection.insertOne(service);
-            res.send(result);
-        });
-
-        app.get("/price", async (req, res) => {
-            const filter = {}
-            const option = { upsert: true }
-            const updatedDoc = {
-                $set: {
-                    price: 100
-                }
-            }
-            const result = await bookingCollection.updateMany(filter, updatedDoc, option)
-            res.send(result)
-        })
-    } finally {
-        //     await client.close();
-    }
+let db;
+async function connectDB() {
+    if (db) return db;
+    await client.connect();
+    db = client.db("Mobile-Store");
+    return db;
 }
-serverStart().catch(console.dir);
+
+// Routes
+app.get("/mobile", async (req, res) => {
+    const db = await connectDB();
+    const data = await db.collection("Mobile").find().toArray();
+    res.send(data);
+});
+
+app.get("/laptops", async (req, res) => {
+    const db = await connectDB();
+    const data = await db.collection("Laptop").find().toArray();
+    res.send(data);
+});
+
+app.get("/tv", async (req, res) => {
+    const db = await connectDB();
+    const data = await db.collection("Tv").find().toArray();
+    res.send(data);
+});
+
+app.get("/categories", async (req, res) => {
+    const db = await connectDB();
+    const data = await db.collection("All-Category").find().toArray();
+    res.send(data);
+});
+
+app.post("/bookings", async (req, res) => {
+    const db = await connectDB();
+    const booking = req.body;
+    const exists = await db.collection("Bookings").findOne({
+        email: booking.email,
+        serviceName: booking.serviceName,
+    });
+    if (exists) {
+        return res.send({ acknowledge: false, message: "Already booked." });
+    }
+    const result = await db.collection("Bookings").insertOne(booking);
+    res.send(result);
+});
+
+app.get("/bookings", async (req, res) => {
+    const db = await connectDB();
+    const email = req.query.email;
+    const data = await db.collection("Bookings").find({ email }).toArray();
+    res.send(data);
+});
+
+app.post("/create-payment-intent", async (req, res) => {
+    const booking = req.body;
+    const amount = booking.price * 100;
+    const paymentIntent = await stripe.paymentIntents.create({
+        currency: "usd",
+        amount,
+        payment_method_types: ["card"],
+    });
+    res.send({ clientSecret: paymentIntent.client_secret });
+});
+
+app.post("/payments", async (req, res) => {
+    const db = await connectDB();
+    const payment = req.body;
+    const result = await db.collection("Payments").insertOne(payment);
+    const filter = { _id: new ObjectId(payment.bookingId) };
+    const update = {
+        $set: { paid: true, transactionId: payment.transactionId },
+    };
+    await db.collection("Bookings").updateOne(filter, update);
+    res.send(result);
+});
+
+app.get("/users", async (req, res) => {
+    const db = await connectDB();
+    const data = await db.collection("Users").find().toArray();
+    res.send(data);
+});
+
+app.post("/users", async (req, res) => {
+    const db = await connectDB();
+    const result = await db.collection("Users").insertOne(req.body);
+    res.send(result);
+});
+
+app.put("/users/admin/:id", async (req, res) => {
+    const db = await connectDB();
+    const id = req.params.id;
+    const filter = { _id: new ObjectId(id) };
+    const update = { $set: { role: "admin" } };
+    const result = await db.collection("Users").updateOne(filter, update);
+    res.send(result);
+});
+
+app.get("/users/admin/:email", async (req, res) => {
+    const db = await connectDB();
+    const email = req.params.email;
+    const user = await db.collection("Users").findOne({ email });
+    res.send({ isAdmin: user?.role === "admin" });
+});
+
+app.get("/all-service", async (req, res) => {
+    const db = await connectDB();
+    const services = await db.collection("Service").find().toArray();
+    res.send(services);
+});
+
+app.post("/add-service", async (req, res) => {
+    const db = await connectDB();
+    const { name, description } = req.body;
+    const pic = req.files.image;
+    const buffer = Buffer.from(pic.data.toString("base64"), "base64");
+    const result = await db.collection("Service").insertOne({
+        name,
+        des: description,
+        img: buffer,
+    });
+    res.send(result);
+});
 
 app.get("/", (req, res) => {
-    res.send("Welcome  Mobile Store!👏👏👏");
+    res.send("Welcome to Mobile Store API");
 });
 
 app.listen(port, () => {
-    console.log(`Our Mobile store app listening on port ${port}`);
+    console.log(`Server running on port ${port}`);
 });
